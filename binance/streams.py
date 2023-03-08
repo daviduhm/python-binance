@@ -41,7 +41,7 @@ class ReconnectingWebsocket:
     MAX_RECONNECTS = 5
     MAX_RECONNECT_SECONDS = 60
     MIN_RECONNECT_WAIT = 0.1
-    TIMEOUT = 10
+    TIMEOUT = 60 * 60  # 1 hour
     NO_MESSAGE_RECONNECT_TIMEOUT = 60
     MAX_QUEUE_SIZE = 100
 
@@ -68,6 +68,7 @@ class ReconnectingWebsocket:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self._log.exception(f"Exiting websocket: {self._path}")
         if self._exit_coro:
             await self._exit_coro(self._path)
         self.ws_state = WSListenerState.EXITING
@@ -87,6 +88,7 @@ class ReconnectingWebsocket:
         self._conn = ws.connect(ws_url, close_timeout=0.1)  # type: ignore
         try:
             self.ws = await self._conn.__aenter__()
+            self._log.info(f"Connected to websocket: {self._path}")
         except:  # noqa
             await self._reconnect()
             return
@@ -128,7 +130,7 @@ class ReconnectingWebsocket:
                         await self._run_reconnect()
 
                     if self.ws_state == WSListenerState.EXITING:
-                        self._log.debug(f"_read_loop {self._path} break for {self.ws_state}")
+                        self._log.warn(f"_read_loop {self._path} break for {self.ws_state}")
                         break
                     elif self.ws.state == ws.protocol.State.CLOSING:  # type: ignore
                         await asyncio.sleep(0.1)
@@ -140,42 +142,43 @@ class ReconnectingWebsocket:
                         res = await asyncio.wait_for(self.ws.recv(), timeout=self.TIMEOUT)
                         res = self._handle_message(res)
                         if res:
-                            if self._queue.qsize() < self.MAX_QUEUE_SIZE:
+                            queue_size = self._queue.qsize()
+                            if queue_size > self.MAX_QUEUE_SIZE / 2:
+                                self._log.warn(f"[{self._path}] Queue size is overflowing: {queue_size}")
+
+                            if queue_size < self.MAX_QUEUE_SIZE:
                                 await self._queue.put(res)
                             else:
-                                self._log.debug(f"Queue overflow {self.MAX_QUEUE_SIZE}. Message not filled")
+                                self._log.warn(f"Queue overflow {self.MAX_QUEUE_SIZE}. Message not filled")
                                 await self._queue.put({
                                     'e': 'error',
                                     'm': 'Queue overflow. Message not filled'
                                 })
                                 raise BinanceWebsocketUnableToConnect
                 except asyncio.TimeoutError:
-                    self._log.debug(f"no message in {self.TIMEOUT} seconds")
-                    # _no_message_received_reconnect
-                except asyncio.CancelledError as e:
-                    self._log.debug(f"cancelled error {e}")
-                    break
+                    self._log.warn(f"[{self._path}][Socket] no message in {self.TIMEOUT} seconds")
                 except asyncio.IncompleteReadError as e:
-                    self._log.debug(f"incomplete read error ({e})")
+                    self._log.warn(f"incomplete read error ({e})")
                 except ConnectionClosedError as e:
-                    self._log.debug(f"connection close error ({e})")
+                    self._log.warn(f"connection close error ({e})")
                 except gaierror as e:
-                    self._log.debug(f"DNS Error ({e})")
+                    self._log.warn(f"DNS Error ({e})")
                 except BinanceWebsocketUnableToConnect as e:
-                    self._log.debug(f"BinanceWebsocketUnableToConnect ({e})")
+                    self._log.warn(f"BinanceWebsocketUnableToConnect ({e})")
                     break
                 except Exception as e:
-                    self._log.debug(f"Unknown exception ({e})")
+                    self._log.warn(f"Unknown exception ({e})")
                     continue
         finally:
             self._handle_read_loop = None  # Signal the coro is stopped
             self._reconnects = 0
 
     async def _run_reconnect(self):
+        self._log.warn(f"[{self._path}] Trying to reconnect...")
         await self.before_reconnect()
         if self._reconnects < self.MAX_RECONNECTS:
             reconnect_wait = self._get_reconnect_wait(self._reconnects)
-            self._log.debug(
+            self._log.warn(
                 f"websocket reconnecting. {self.MAX_RECONNECTS - self._reconnects} reconnects left - "
                 f"waiting {reconnect_wait}"
             )
@@ -196,7 +199,7 @@ class ReconnectingWebsocket:
             try:
                 res = await asyncio.wait_for(self._queue.get(), timeout=self.TIMEOUT)
             except asyncio.TimeoutError:
-                self._log.debug(f"no message in {self.TIMEOUT} seconds")
+                self._log.warn(f"[{self._path}][Queue] no message in {self.TIMEOUT} seconds")
         return res
 
     async def _wait_for_reconnect(self):
@@ -209,12 +212,13 @@ class ReconnectingWebsocket:
 
     async def before_reconnect(self):
         if self.ws and self._conn:
+            self._log.warn(f"[{self._path}] Websocket is not available. Exiting...")
             await self._conn.__aexit__(None, None, None)
             self.ws = None
         self._reconnects += 1
 
     def _no_message_received_reconnect(self):
-        self._log.debug('No message received, reconnecting')
+        self._log.warn('No message received, reconnecting')
         self.ws_state = WSListenerState.RECONNECTING
 
     async def _reconnect(self):
