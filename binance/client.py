@@ -6875,7 +6875,7 @@ class Client(BaseClient):
         https://binance-docs.github.io/apidocs/futures/en/#future-account-balance-user_data
 
         """
-        return self._request_futures_api('get', 'balance', True, 2, data=params)
+        return self._request_futures_api('get', 'balance', True, 3, data=params)
 
     def futures_account(self, **params):
         """Get current account information.
@@ -6883,7 +6883,7 @@ class Client(BaseClient):
         https://binance-docs.github.io/apidocs/futures/en/#account-information-user_data
 
         """
-        return self._request_futures_api('get', 'account', True, 2, data=params)
+        return self._request_futures_api('get', 'account', True, 3, data=params)
 
     def futures_change_leverage(self, **params):
         """Change user's initial leverage of specific symbol market
@@ -6923,7 +6923,7 @@ class Client(BaseClient):
         https://binance-docs.github.io/apidocs/futures/en/#position-information-user_data
 
         """
-        return self._request_futures_api('get', 'positionRisk', True, 2, data=params)
+        return self._request_futures_api('get', 'positionRisk', True, 3, data=params)
 
     def futures_account_trades(self, **params):
         """Get trades for the authenticated account and symbol.
